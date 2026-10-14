@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "X For You Disable",
+  "version": "1.0.0",
+  "description": "Hides the \"For you\" tab on X and always opens the Following timeline.",
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*", "https://mobile.x.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "x-for-you-disable@local",
+      "strict_min_version": "109.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "120.0"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">X For You Disable</string>
+    <string name="service_label">X For You Blocker</string>
+    <string name="service_description">Watches the X app and switches Home to the Following tab whenever For you is selected, and covers the For you tab so it can\'t be tapped. It reads only the X app\'s screen and sends nothing anywhere.</string>
+</resources>

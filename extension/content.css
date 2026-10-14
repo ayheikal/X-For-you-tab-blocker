@@ -1,0 +1,10 @@
+/* The "For you" tab wrapper, marked by content.js. */
+.xfud-hidden {
+  display: none !important;
+}
+
+/* While "For you" is still the selected tab (before the switch to Following
+   lands), hide the timeline so its posts never flash on screen. */
+html.xfud-switching [data-testid="primaryColumn"] section {
+  visibility: hidden !important;
+}
