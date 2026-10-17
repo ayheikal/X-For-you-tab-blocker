@@ -32,8 +32,11 @@ class ForYouBlockerService : AccessibilityService() {
     private val overlayBounds = Rect()
     private var lastClickAt = 0L
 
+    private var lastDiagnosticsAt = 0L
+
     override fun onServiceConnected() {
         Log.d(TAG, "service connected")
+        Diagnostics.write(this, Diagnostics.KEY_CONNECTED, Diagnostics.timestamp())
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -57,13 +60,14 @@ class ForYouBlockerService : AccessibilityService() {
     private fun scan() {
         scanPending = false
 
-        val root = rootInActiveWindow
-        if (root == null || root.packageName?.toString() != X_PACKAGE) {
+        val root = findXRoot()
+        if (root == null) {
             removeOverlay()
             return
         }
 
         val tabs = findHomeTabs(root)
+        recordDiagnostics(root, tabs)
         if (tabs == null) {
             removeOverlay()
             return
@@ -80,6 +84,62 @@ class ForYouBlockerService : AccessibilityService() {
         val bounds = Rect()
         clickTarget(forYou).getBoundsInScreen(bounds)
         if (bounds.isEmpty) removeOverlay() else showOverlay(bounds)
+    }
+
+    /**
+     * The active window isn't always X's main window (keyboard, popups, split
+     * screen), so fall back to searching every window on screen.
+     */
+    private fun findXRoot(): AccessibilityNodeInfo? {
+        rootInActiveWindow?.let { if (it.packageName?.toString() == X_PACKAGE) return it }
+        return try {
+            windows.firstNotNullOfOrNull { window ->
+                window.root?.takeIf { it.packageName?.toString() == X_PACKAGE }
+            }
+        } catch (e: RuntimeException) {
+            null
+        }
+    }
+
+    /**
+     * Saves what the service sees at the top of X's screen, so it can be read
+     * from the app without adb. Throttled because it walks the whole tree.
+     */
+    private fun recordDiagnostics(
+        root: AccessibilityNodeInfo,
+        tabs: Pair<AccessibilityNodeInfo, AccessibilityNodeInfo>?,
+    ) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastDiagnosticsAt < DIAGNOSTICS_INTERVAL_MS) return
+        lastDiagnosticsAt = now
+
+        val topLimit = resources.displayMetrics.heightPixels / 3
+        val lines = mutableListOf<String>()
+        fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > MAX_DIAGNOSTICS_DEPTH || lines.size >= MAX_DIAGNOSTICS_LINES) return
+            val bounds = Rect().also { node.getBoundsInScreen(it) }
+            val text = node.text?.toString()?.trim().orEmpty()
+            val desc = node.contentDescription?.toString()?.trim().orEmpty()
+            if ((text.isNotEmpty() || desc.isNotEmpty()) && !bounds.isEmpty && bounds.top < topLimit) {
+                lines += "text=\"$text\" desc=\"$desc\" sel=${node.isSelected} click=${node.isClickable} " +
+                    "id=${node.viewIdResourceName?.substringAfter('/')} cls=${node.className?.toString()?.substringAfterLast('.')} " +
+                    "y=${bounds.top}-${bounds.bottom} x=${bounds.left}-${bounds.right}"
+            }
+            for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
+        }
+        walk(root, 0)
+
+        val summary = if (tabs == null) {
+            "tabs NOT found (For you nodes=${findLabelled(root, FOR_YOU_LABELS).size}, " +
+                "Following nodes=${findLabelled(root, FOLLOWING_LABELS).size})"
+        } else {
+            "tabs found, For you selected=${isSelected(tabs.first)}, Following selected=${isSelected(tabs.second)}"
+        }
+        Diagnostics.write(
+            this,
+            Diagnostics.KEY_REPORT,
+            "${Diagnostics.timestamp()} $summary\n\n" + lines.joinToString("\n"),
+        )
     }
 
     /**
@@ -112,14 +172,23 @@ class ForYouBlockerService : AccessibilityService() {
             }
         }
 
-    /** The label is usually a TextView inside the tab view that holds the selected state. */
+    /**
+     * The label is usually a TextView inside the tab view that holds the
+     * selected state, but some X versions set it on a sibling or child instead.
+     */
     private fun isSelected(node: AccessibilityNodeInfo): Boolean {
         var current: AccessibilityNodeInfo? = node
         repeat(SELECTED_ANCESTOR_DEPTH) {
             if (current?.isSelected == true) return true
             current = current?.parent
         }
-        return false
+        return hasSelectedDescendant(clickTarget(node), 0)
+    }
+
+    private fun hasSelectedDescendant(node: AccessibilityNodeInfo?, depth: Int): Boolean {
+        if (node == null || depth > SELECTED_DESCENDANT_DEPTH) return false
+        if (node.isSelected) return true
+        return (0 until node.childCount).any { hasSelectedDescendant(node.getChild(it), depth + 1) }
     }
 
     private fun clickTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
@@ -211,6 +280,11 @@ class ForYouBlockerService : AccessibilityService() {
         private const val SCAN_DELAY_MS = 120L
         private const val CLICK_COOLDOWN_MS = 800L
         private const val SELECTED_ANCESTOR_DEPTH = 3
+        private const val SELECTED_DESCENDANT_DEPTH = 3
         private const val CLICKABLE_ANCESTOR_DEPTH = 4
+
+        private const val DIAGNOSTICS_INTERVAL_MS = 2000L
+        private const val MAX_DIAGNOSTICS_DEPTH = 40
+        private const val MAX_DIAGNOSTICS_LINES = 60
     }
 }
